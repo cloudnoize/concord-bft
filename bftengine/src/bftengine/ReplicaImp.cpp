@@ -238,6 +238,9 @@ void ReplicaImp::tryToSendPrePrepareMsg(bool batchingLogic) {
 
   if (requestsQueueOfPrimary.empty()) return;
 
+  CommitPath firstPath = controller->getCurrentFirstPath();
+  concordlogger::MDC cpk(GL, COMMIT_PATH_KEY, CommitPathToStr(firstPath));
+
   // remove irrelevant requests from the head of the requestsQueueOfPrimary (and update requestsInQueue)
   ClientRequestMsg *first = requestsQueueOfPrimary.front();
   while (first != nullptr &&
@@ -289,8 +292,6 @@ void ReplicaImp::tryToSendPrePrepareMsg(bool batchingLogic) {
   // because maxConcurrentAgreementsByPrimary <  MaxConcurrentFastPaths
   Assert((primaryLastUsedSeqNum + 1) <= lastExecutedSeqNum + MaxConcurrentFastPaths);
 
-  CommitPath firstPath = controller->getCurrentFirstPath();
-
   // assert: (cVal==0) --> (firstPath != CommitPath::FAST_WITH_THRESHOLD)
   Assert((config_.cVal != 0) || (firstPath != CommitPath::FAST_WITH_THRESHOLD));
 
@@ -321,10 +322,14 @@ void ReplicaImp::tryToSendPrePrepareMsg(bool batchingLogic) {
     DebugStatistics::onSendPrePrepareMessage(pp->numberOfRequests(), requestsQueueOfPrimary.size());
   }
   primaryLastUsedSeqNum++;
-  concordlogger::MDC sn(GL, SEQ_NUM_KEY, primaryLastUsedSeqNum);
+  MDC_PRI_SN_PATH(GL, currentPrimary(), primaryLastUsedSeqNum, CommitPathToAbbStr(firstPath));
+  LOG_DEBUG(GL, "##################tryToSendPrePrepareMsg#################");
   {
     concordlogger::MDC content(GL, "cid", "content: " + pp->getBatchCorrelationIdAsString());
-    LOG_TRACE(GL, "map batch sequence number to correlation ids");
+    LOG_DEBUG(GL, "map batch sequence number to correlation ids");
+    LOG_DEBUG(GL,
+              "Node " << config_.replicaId << " Sending PrePrepareMsg (seqNumber=" << pp->seqNumber() << ", requests="
+                      << (int)pp->numberOfRequests() << ", queue size=" << (int)requestsQueueOfPrimary.size() << ")");
   }
   SeqNumInfo &seqNumInfo = mainLog->get(primaryLastUsedSeqNum);
   seqNumInfo.addSelfMsg(pp);
@@ -384,7 +389,8 @@ template <>
 void ReplicaImp::onMessage<PrePrepareMsg>(PrePrepareMsg *msg) {
   metric_received_pre_prepares_.Get().Inc();
   const SeqNum msgSeqNum = msg->seqNumber();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
+  MDC_PRI_SN_PATH(GL, currentPrimary(), msgSeqNum, CommitPathToAbbStr(msg->firstPath()));
+  LOG_DEBUG(GL, "##################PrePrepareMsg#################");
   LOG_DEBUG(GL,
             "Node " << config_.replicaId << " received PrePrepareMsg from node " << msg->senderId() << " for seqNumber "
                     << msgSeqNum << " (size=" << msg->size() << ")");
@@ -414,7 +420,7 @@ void ReplicaImp::onMessage<PrePrepareMsg>(PrePrepareMsg *msg) {
     if (seqNumInfo.addMsg(msg)) {
       {
         concordlogger::MDC content(GL, "cid", "content: " + msg->getBatchCorrelationIdAsString());
-        LOG_TRACE(GL, "map batch sequence number to correlation ids");
+        LOG_DEBUG(GL, "map batch sequence number to correlation ids");
       }
       msgAdded = true;
 
@@ -480,7 +486,8 @@ void ReplicaImp::tryToStartSlowPaths() {
     const Time timeOfPartProof = seqNumInfo.partialProofs().getTimeOfSelfPartialProof();
 
     if (currTime - timeOfPartProof < milliseconds(controller->timeToStartSlowPathMilli())) break;
-
+    MDC_PRI_SN_PATH(GL, currentPrimary(), i, "S");
+    LOG_DEBUG(GL, "##################tryToStartSlowPaths#################");
     LOG_INFO(GL,
              "Primary initiates slow path for seqNum="
                  << i << " (currTime=" << duration_cast<microseconds>(currTime.time_since_epoch()).count()
@@ -573,7 +580,8 @@ template <>
 void ReplicaImp::onMessage<StartSlowCommitMsg>(StartSlowCommitMsg *msg) {
   metric_received_start_slow_commits_.Get().Inc();
   const SeqNum msgSeqNum = msg->seqNumber();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
+  MDC_PRI_SN_PATH(GL, currentPrimary(), msgSeqNum, "S");
+  LOG_DEBUG(GL, "##################StartSlowCommitMsg#################");
   LOG_INFO(GL, "Received StartSlowCommitMsg for seqNumber=" << msgSeqNum);
 
   if (relevantMsgForActiveView(msg)) {
@@ -648,9 +656,12 @@ void ReplicaImp::sendPartialProof(SeqNumInfo &seqNumInfo) {
       for (int i = 0; i < numOfRouters; i++) {
         ReplicaId router = routersArray[i];
         if (router != config_.replicaId) {
+          LOG_DEBUG(GL, "Sending partial proof to collector " << router);
           sendRetransmittableMsgToReplica(part, router, seqNum);
         }
       }
+    } else {
+      // TODO EL metric and log MaxConcurrentFastPaths
     }
   }
 }
@@ -676,6 +687,7 @@ void ReplicaImp::sendPreparePartial(SeqNumInfo &seqNumInfo) {
 void ReplicaImp::sendCommitPartial(const SeqNum s) {
   Assert(currentViewIsActive());
   Assert(mainLog->insideActiveWindow(s));
+  LOG_DEBUG(GL, "##################sendCommitPartial#################");  // TO do add mdc seqnum
 
   SeqNumInfo &seqNumInfo = mainLog->get(s);
   PrePrepareMsg *pp = seqNumInfo.getPrePrepareMsg();
@@ -704,7 +716,10 @@ void ReplicaImp::onMessage<PartialCommitProofMsg>(PartialCommitProofMsg *msg) {
   const SeqNum msgSeqNum = msg->seqNumber();
   const SeqNum msgView = msg->viewNumber();
   const NodeIdType msgSender = msg->senderId();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
+
+  MDC_PRI_SN_PATH(GL, currentPrimary(), msgSeqNum, CommitPathToAbbStr(msg->commitPath()));
+  LOG_DEBUG(GL, "##################PartialCommitProofMsg#################");
+
   Assert(repsInfo->isIdOfPeerReplica(msgSender));
   Assert(repsInfo->isCollectorForPartialProofs(msgView, msgSeqNum));
 
@@ -732,13 +747,18 @@ void ReplicaImp::onMessage<PartialCommitProofMsg>(PartialCommitProofMsg *msg) {
 template <>
 void ReplicaImp::onMessage<FullCommitProofMsg>(FullCommitProofMsg *msg) {
   metric_received_full_commit_proofs_.Get().Inc();
+
+  const SeqNum msgSeqNum = msg->seqNumber();
+  MDC_PRIMARY_PUT(GL, currentPrimary());
+  MDC_SN_PUT(GL, msgSeqNum);
   LOG_DEBUG(GL,
             "Node " << config_.replicaId << " received FullCommitProofMsg message for seqNumber " << msg->seqNumber());
 
-  const SeqNum msgSeqNum = msg->seqNumber();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
   if (relevantMsgForActiveView(msg)) {
     SeqNumInfo &seqNumInfo = mainLog->get(msgSeqNum);
+
+    MDC_PATH_PUT(GL, seqNumInfo.slowPathStarted() ? "S" : "F");
+    LOG_DEBUG(GL, "##################FullCommitProofMsg#################");
     PartialProofsSet &pps = seqNumInfo.partialProofs();
 
     if (!pps.hasFullProof() && pps.addMsg(msg))  // TODO(GG): consider to verify the signature in another thread
@@ -783,11 +803,15 @@ void ReplicaImp::onMessage<PreparePartialMsg>(PreparePartialMsg *msg) {
   metric_received_prepare_partials_.Get().Inc();
   const SeqNum msgSeqNum = msg->seqNumber();
   const ReplicaId msgSender = msg->senderId();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
   bool msgAdded = false;
 
   if (relevantMsgForActiveView(msg)) {
     Assert(isCurrentPrimary());
+
+    SeqNumInfo &seqNumInfo = mainLog->get(msgSeqNum);
+
+    MDC_PRI_SN_PATH(GL, currentPrimary(), msgSeqNum, seqNumInfo.slowPathStarted() ? "S" : "F");
+    LOG_DEBUG(GL, "##################PreparePartialMsg#################");
 
     sendAckIfNeeded(msg, msgSender, msgSeqNum);
 
@@ -796,8 +820,6 @@ void ReplicaImp::onMessage<PreparePartialMsg>(PreparePartialMsg *msg) {
                       << msgSeqNum);
 
     controller->onMessage(msg);
-
-    SeqNumInfo &seqNumInfo = mainLog->get(msgSeqNum);
 
     FullCommitProofMsg *fcp = seqNumInfo.partialProofs().getFullProof();
 
@@ -829,19 +851,21 @@ void ReplicaImp::onMessage<CommitPartialMsg>(CommitPartialMsg *msg) {
   metric_received_commit_partials_.Get().Inc();
   const SeqNum msgSeqNum = msg->seqNumber();
   const ReplicaId msgSender = msg->senderId();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
+  MDC_PRIMARY_PUT(GL, currentPrimary());
+  MDC_SN_PUT(GL, msgSeqNum);
   bool msgAdded = false;
 
   if (relevantMsgForActiveView(msg)) {
     Assert(isCurrentPrimary());
 
+    SeqNumInfo &seqNumInfo = mainLog->get(msgSeqNum);
+    MDC_PATH_PUT(GL, seqNumInfo.slowPathStarted() ? "S" : "F");
+    LOG_DEBUG(GL, "##################CommitPartialMsg#################");
     sendAckIfNeeded(msg, msgSender, msgSeqNum);
 
     LOG_DEBUG(GL,
               "Node " << config_.replicaId << " received CommitPartialMsg from node " << msgSender << " for seqNumber "
                       << msgSeqNum);
-
-    SeqNumInfo &seqNumInfo = mainLog->get(msgSeqNum);
 
     FullCommitProofMsg *fcp = seqNumInfo.partialProofs().getFullProof();
 
@@ -869,15 +893,16 @@ void ReplicaImp::onMessage<PrepareFullMsg>(PrepareFullMsg *msg) {
   metric_received_prepare_fulls_.Get().Inc();
   const SeqNum msgSeqNum = msg->seqNumber();
   const ReplicaId msgSender = msg->senderId();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
+  MDC_PRIMARY_PUT(GL, currentPrimary());
+  MDC_SN_PUT(GL, msgSeqNum);
   bool msgAdded = false;
 
   if (relevantMsgForActiveView(msg)) {
     sendAckIfNeeded(msg, msgSender, msgSeqNum);
-
-    LOG_DEBUG(GL, "Node " << config_.replicaId << " received PrepareFullMsg for seqNumber " << msgSeqNum);
-
     SeqNumInfo &seqNumInfo = mainLog->get(msgSeqNum);
+    MDC_PATH_PUT(GL, seqNumInfo.slowPathStarted() ? "S" : "F");
+    LOG_DEBUG(GL, "##################PrepareFullMsg#################");
+    LOG_DEBUG(GL, "Node " << config_.replicaId << " received PrepareFullMsg for seqNumber " << msgSeqNum);
 
     FullCommitProofMsg *fcp = seqNumInfo.partialProofs().getFullProof();
 
@@ -908,15 +933,16 @@ void ReplicaImp::onMessage<CommitFullMsg>(CommitFullMsg *msg) {
   metric_received_commit_fulls_.Get().Inc();
   const SeqNum msgSeqNum = msg->seqNumber();
   const ReplicaId msgSender = msg->senderId();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
+  MDC_PRIMARY_PUT(GL, currentPrimary());
+  MDC_SN_PUT(GL, msgSeqNum);
   bool msgAdded = false;
 
   if (relevantMsgForActiveView(msg)) {
     sendAckIfNeeded(msg, msgSender, msgSeqNum);
-
-    LOG_DEBUG(GL, "Node " << config_.replicaId << " received CommitFullMsg for seqNumber " << msgSeqNum);
-
     SeqNumInfo &seqNumInfo = mainLog->get(msgSeqNum);
+    MDC_PATH_PUT(GL, seqNumInfo.slowPathStarted() ? "S" : "F");
+    LOG_DEBUG(GL, "##################CommitFullMsg#################");
+    LOG_DEBUG(GL, "Node " << config_.replicaId << " received CommitFullMsg for seqNumber " << msgSeqNum);
 
     FullCommitProofMsg *fcp = seqNumInfo.partialProofs().getFullProof();
 
@@ -1058,6 +1084,7 @@ void ReplicaImp::onCommitCombinedSigSucceeded(SeqNum seqNumber,
   }
 
   SeqNumInfo &seqNumInfo = mainLog->get(seqNumber);
+  MDC_PRI_SN_PATH(GL, currentPrimary(), seqNumber, seqNumInfo.slowPathStarted() ? "S" : "F");
 
   seqNumInfo.onCompletionOfCommitSignaturesProcessing(seqNumber, v, combinedSig, combinedSigLen);
 
@@ -1092,6 +1119,7 @@ void ReplicaImp::onCommitVerifyCombinedSigResult(SeqNum seqNumber, ViewNum v, bo
   }
 
   SeqNumInfo &seqNumInfo = mainLog->get(seqNumber);
+  MDC_PRI_SN_PATH(GL, currentPrimary(), seqNumber, seqNumInfo.slowPathStarted() ? "S" : "F");
 
   seqNumInfo.onCompletionOfCombinedCommitSigVerification(seqNumber, v, isValid);
 
@@ -1117,7 +1145,9 @@ void ReplicaImp::onMessage<CheckpointMsg>(CheckpointMsg *msg) {
   const SeqNum msgSeqNum = msg->seqNumber();
   const Digest msgDigest = msg->digestOfState();
   const bool msgIsStable = msg->isStableState();
-  concordlogger::MDC seqNum(GL, SEQ_NUM_KEY, msgSeqNum);
+  MDC_PRIMARY_PUT(GL, currentPrimary());
+  MDC_SN_PUT(GL, msgSeqNum);
+  LOG_DEBUG(GL, "##################CheckpointMsg#################");
   LOG_DEBUG(GL,
             "Node " << config_.replicaId << " received Checkpoint message from node " << msgSenderId
                     << " for seqNumber " << msgSeqNum << " (size=" << msg->size() << ", stable="
@@ -1207,6 +1237,8 @@ template <>
 void ReplicaImp::onMessage<AskForCheckpointMsg>(AskForCheckpointMsg *msg) {
   // metric_received_checkpoints_.Get().Inc(); // TODO [TK]
 
+  MDC_PRIMARY_PUT(GL, currentPrimary());
+  LOG_DEBUG(GL, "##################CheckpointMsg#################");
   LOG_INFO(GL, "Received AskForCheckpoint message from senderId=" << msg->senderId());
 
   const CheckpointInfo &checkpointInfo = checkpointsLog->get(lastStableSeqNum);
@@ -1385,6 +1417,9 @@ void ReplicaImp::onMessage<ReplicaStatusMsg>(ReplicaStatusMsg *msg) {
   const ReplicaId msgSenderId = msg->senderId();
   const SeqNum msgLastStable = msg->getLastStableSeqNum();
   const ViewNum msgViewNum = msg->getViewNumber();
+
+  MDC_PRIMARY_PUT(GL, currentPrimary());
+  LOG_DEBUG(GL, "##################ReplicaStatusMsg#################");
   Assert(msgLastStable % checkpointWindowSize == 0);
 
   LOG_DEBUG(GL, "Node " << config_.replicaId << " received ReplicaStatusMsg from node " << msgSenderId << msgSenderId);

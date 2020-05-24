@@ -56,3 +56,12 @@ class MDC {
 #define CID_KEY "cid"
 #define MDC_CID_PUT(l, v) MDC_PUT(l, CID_KEY, v)
 #define SEQ_NUM_KEY "sn"
+#define MDC_SN_PUT(l, v) concordlogger::MDC snmdc((l), SEQ_NUM_KEY, (v))
+#define COMMIT_PATH_KEY "path"
+#define MDC_PATH_PUT(l, v) concordlogger::MDC pathmdc((l), COMMIT_PATH_KEY, (v))
+#define PRIMARY_KEY "pri"
+#define MDC_PRIMARY_PUT(l, v) concordlogger::MDC primdc((l), PRIMARY_KEY, (v));
+#define MDC_PRI_SN_PATH(l, pr, sn, path) \
+  MDC_SN_PUT(l, sn);                     \
+  MDC_PRIMARY_PUT(l, pr);                \
+  MDC_PATH_PUT(l, path)

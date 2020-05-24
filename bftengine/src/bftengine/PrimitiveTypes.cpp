@@ -19,5 +19,20 @@ std::string CommitPathToStr(CommitPath path) {
   }
 }
 
+std::string CommitPathToAbbStr(CommitPath path) {
+  switch (path) {
+    case CommitPath::NA:
+      return "NA";
+    case CommitPath::OPTIMISTIC_FAST:
+      return "F";
+    case CommitPath::FAST_WITH_THRESHOLD:
+      return "FWT";
+    case CommitPath::SLOW:
+      return "S";
+    default:
+      throw std::runtime_error("Unsupported CommitPath specified.");
+  }
+}
+
 }  // namespace impl
 }  // namespace bftEngine
