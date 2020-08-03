@@ -3337,9 +3337,8 @@ void ReplicaImp::executeRequestsInPrePrepareMsg(concordUtils::SpanWrapper &paren
 
   // recoverFromErrorInRequestsExecution ==> (numOfRequests > 0)
   ConcordAssertOR(!recoverFromErrorInRequestsExecution, (numOfRequests > 0));
-
+  Bitmap requestSet(numOfRequests);
   if (numOfRequests > 0) {
-    Bitmap requestSet(numOfRequests);
     size_t reqIdx = 0;
     RequestsIterator reqIter(ppMsg);
     char *requestBody = nullptr;
@@ -3373,12 +3372,6 @@ void ReplicaImp::executeRequestsInPrePrepareMsg(concordUtils::SpanWrapper &paren
       }
       reqIter.restart();
 
-      if (ps_) {
-        DescriptorOfLastExecution execDesc{lastExecutedSeqNum + 1, requestSet};
-        ps_->beginWriteTran();
-        ps_->setDescriptorOfLastExecution(execDesc);
-        ps_->endWriteTran();
-      }
     } else {
       requestSet = mapOfRequestsThatAreBeingRecovered;
     }
@@ -3454,6 +3447,10 @@ void ReplicaImp::executeRequestsInPrePrepareMsg(concordUtils::SpanWrapper &paren
 
   if (ps_) {
     ps_->beginWriteTran();
+    if (numOfRequests > 0) {
+      DescriptorOfLastExecution execDesc{lastExecutedSeqNum + 1, requestSet};
+      ps_->setDescriptorOfLastExecution(execDesc);
+    }
     ps_->setLastExecutedSeqNum(lastExecutedSeqNum + 1);
   }
 
