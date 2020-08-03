@@ -2,10 +2,15 @@
 #include "thread"
 #include "ReplicaImp.hpp"
 #include "ReplicaConfig.hpp"
+#include <memory>
+#include "messages/ClientRequestMsg.hpp"
 
 const std::string KeyManager::KeyExchangeMsg::getVersion() const { return "1"; }
 
-KeyManager::KeyExchangeMsg KeyManager::KeyExchangeMsg::deserializeMsg(const char* serializedMsg, const uint32_t& size) {
+KeyManager::KeyExchangeMsg::KeyExchangeMsg(std::string k, std::string s, int id)
+    : key(std::move(k)), signature(std::move(s)), repID(id) {}
+
+KeyManager::KeyExchangeMsg KeyManager::KeyExchangeMsg::deserializeMsg(const char* serializedMsg, const int& size) {
   std::stringstream ss;
   KeyManager::KeyExchangeMsg ke;
   ss.write(serializedMsg, std::streamsize(size));
@@ -34,10 +39,9 @@ std::string KeyManager::KeyExchangeMsg::toString() const {
   return ss.str();
 }
 
-void KeyManager::set(bftEngine::IBasicClient* cl, const int& id) {
-  cl_ = cl;
-  repID_ = id;
-}
+void KeyManager::setID(const int& id) { repID_ = id; }
+
+void KeyManager::setMsgQueue(IncomingMsgsStorage* q) { msgQueue_ = q; }
 
 /*
 Usage:
@@ -56,16 +60,31 @@ Usage:
                           buff,
                           &actSize);
 */
-void KeyManager::sendKeyExchange() { LOG_DEBUG(GL, "KEY EXCHANGE MANAGER  send msg"); }
+void KeyManager::sendKeyExchange() {
+  counter_++;
+  KeyExchangeMsg msg{"3c9dac7b594efaea8acd66a18f957f2e", "82c0700a4b907e189529fcc467fd8a1b", repID_};
+  std::stringstream ss;
+  concord::serialize::Serializable::serialize(ss, msg);
+  auto strMsg = ss.str();
+  auto crm = new ClientRequestMsg(
+      repID_ + 10000, bftEngine::KEY_EXCHANGE_FLAG, counter_, strMsg.size(), strMsg.c_str(), 60000, generateCid());
+  msgQueue_->pushExternalMsg(std::unique_ptr<MessageBase>(crm));
+  LOG_DEBUG(GL, "KEY EXCHANGE MANAGER  send msg");
+}
+
+std::string KeyManager::generateCid() {
+  std::string cid{"KEY-EXCHANGE-"};
+  cid += std::to_string(repID_) + "-" + std::to_string(counter_);
+  return cid;
+}
 
 std::string KeyManager::onKeyExchange(const KeyExchangeMsg& kemsg) {
-  static int counter = 0;
-  counter++;
+  counter_++;
   LOG_DEBUG(GL, "KEY EXCHANGE MANAGER  msg " << kemsg.toString());
   auto numRep = bftEngine::ReplicaConfigSingleton::GetInstance().GetNumReplicas();
-  if (counter < numRep) {
-    LOG_DEBUG(GL, "Exchanged [" << counter << "] out of [" << numRep << "]");
-  } else if (counter == numRep) {
+  if (counter_ < numRep) {
+    LOG_DEBUG(GL, "Exchanged [" << counter_ << "] out of [" << numRep << "]");
+  } else if (counter_ == numRep) {
     LOG_INFO(GL, "KEY EXCHANGE: start accepting msgs");
     keysExchanged = true;
   }

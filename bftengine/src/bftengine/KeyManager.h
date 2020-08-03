@@ -1,16 +1,18 @@
 #pragma once
 
 #include "Serializable.h"
-#include "IBasicClient.h"
+#include "IncomingMsgsStorage.hpp"
 
 class KeyManager {
  public:
   struct KeyExchangeMsg : public concord::serialize::SerializableFactory<KeyExchangeMsg> {
     std::string key;
     std::string signature;
-    uint32_t repID;
+    int repID;
+    KeyExchangeMsg(){};
+    KeyExchangeMsg(std::string key, std::string signature, int repID);
     std::string toString() const;
-    static KeyExchangeMsg deserializeMsg(const char* serStr, const uint32_t& size);
+    static KeyExchangeMsg deserializeMsg(const char* serStr, const int& size);
 
    protected:
     const std::string getVersion() const;
@@ -19,8 +21,11 @@ class KeyManager {
   };
 
  private:
-  bftEngine::IBasicClient* cl_{nullptr};
   int repID_{};
+  std::atomic_int counter_ = 0;
+  std::string generateCid();
+  IncomingMsgsStorage* msgQueue_{nullptr};
+
   KeyManager() {}
   KeyManager(const KeyManager&) = delete;
   KeyManager(const KeyManager&&) = delete;
@@ -29,7 +34,8 @@ class KeyManager {
 
  public:
   std::atomic_bool keysExchanged{false};
-  void set(bftEngine::IBasicClient* cl, const int& id);
+  void setID(const int& id);
+  void setMsgQueue(IncomingMsgsStorage* q);
   void sendKeyExchange();
   std::string onKeyExchange(const KeyExchangeMsg& kemsg);
   void onCheckpoint(const int& num);

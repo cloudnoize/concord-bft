@@ -21,6 +21,7 @@
 #include "MsgsCommunicator.hpp"
 #include "PreProcessor.hpp"
 #include "MsgReceiver.hpp"
+#include "KeyManager.h"
 
 #include <condition_variable>
 #include <memory>
@@ -154,6 +155,7 @@ IReplica::IReplicaPtr IReplica::createNewReplica(ReplicaConfig *replicaConfig,
       std::make_unique<IncomingMsgsStorageImp>(msgHandlersPtr, timersResolution, replicaConfig->replicaId);
   auto &timers = incomingMsgsStorageImpPtr->timers();
   shared_ptr<IncomingMsgsStorage> incomingMsgsStoragePtr{std::move(incomingMsgsStorageImpPtr)};
+  KeyManager::get().setMsgQueue(incomingMsgsStoragePtr.get());
   shared_ptr<bft::communication::IReceiver> msgReceiverPtr(new MsgReceiver(incomingMsgsStoragePtr));
   shared_ptr<MsgsCommunicator> msgsCommunicatorPtr(
       new MsgsCommunicator(communication, incomingMsgsStoragePtr, msgReceiverPtr));
