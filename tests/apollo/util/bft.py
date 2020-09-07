@@ -788,6 +788,15 @@ class BftTestNetwork:
         assert total_nb_slow_paths - nb_slow_paths_so_far >= total_nb_executed_sequences - as_of_seq_num, \
             f'Slow path is not prevalent for n={self.config.n}, f={self.config.f}, c={self.config.c}.'
 
+    async def assert_key_exchange_on_start(
+            self, replica_id=0):
+       
+        metric_key = ['replica', 'Gauges', 'lastExecutedSeqNum']
+        total_nb_executed_sequences = await self.metrics.get(replica_id, *metric_key)
+
+        assert total_nb_executed_sequences == 0
+
+
     async def _assert_state_transfer_not_started(self, replica):
         key = ['replica', 'Counters', 'receivedStateTransferMsgs']
         n = await self.metrics.get(replica.id, *key)

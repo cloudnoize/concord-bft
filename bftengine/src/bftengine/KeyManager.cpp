@@ -22,12 +22,35 @@ KeyManager::KeyManager(InternalBFTClient* cl,
                        const int& id,
                        const uint32_t& clusterSize,
                        IReservedPages* reservedPages,
-                       const uint32_t sizeOfReservedPage)
-    : repID_(id), clusterSize_(clusterSize), client_(cl), keyStore_{clusterSize, *reservedPages, sizeOfReservedPage} {
+                       const uint32_t sizeOfReservedPage,
+                       concordUtil::Timers& timers)
+    : repID_(id),
+      clusterSize_(clusterSize),
+      client_(cl),
+      keyStore_{clusterSize, *reservedPages, sizeOfReservedPage},
+      timers_(timers) {
   if (keyStore_.exchangedReplicas.size() == clusterSize_) {
     keysExchanged = true;
     LOG_INFO(KEY_EX_LOG, "All replicas keys loaded from reserved pages, can start accepting msgs");
   }
+  // update keyexchange on start metric
+  for (uint16_t i = 0; i < keyStore_.exchangedReplicas.size(); ++i) {
+    metrics_->keyExchangedOnStartCounter.Get().Inc();
+  }
+}
+
+void KeyManager::initMetrics(std::shared_ptr<concordMetrics::Aggregator> a, std::chrono::seconds interval) {
+  metrics_.reset(new Metrics(a, interval));
+  metrics_->component.Register();
+  metricsTimer_ = timers_.add(std::chrono::milliseconds(100), Timers::Timer::RECURRING, [this](Timers::Handle h) {
+    metrics_->component.UpdateAggregator();
+    auto currTime =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch());
+    if (currTime - metrics_->lastMetricsDumpTime >= metrics_->metricsDumpIntervalInSec) {
+      metrics_->lastMetricsDumpTime = currTime;
+      LOG_INFO(KEY_EX_LOG, "-- KeyManager metrics dump--" + metrics_->component.ToJson());
+    }
+  });
 }
 
 std::string KeyManager::generateCid() {
@@ -42,7 +65,9 @@ std::string KeyManager::generateCid() {
 std::string KeyManager::onKeyExchange(KeyExchangeMsg& kemsg, const uint64_t& sn) {
   LOG_DEBUG(KEY_EX_LOG, "Recieved " << kemsg.toString() << " seq num " << sn);
   if (!keysExchanged) {
-    keyStore_.exchangedReplicas.insert(kemsg.repID);
+    if (auto [i, ok] = keyStore_.exchangedReplicas.insert(kemsg.repID); ok) {
+      metrics_->keyExchangedOnStartCounter.Get().Inc();
+    }
     LOG_DEBUG(KEY_EX_LOG, "Exchanged [" << keyStore_.exchangedReplicas.size() << "] out of [" << clusterSize_ << "]");
     if (keyStore_.exchangedReplicas.size() == clusterSize_) {
       keysExchanged = true;
@@ -51,6 +76,7 @@ std::string KeyManager::onKeyExchange(KeyExchangeMsg& kemsg, const uint64_t& sn)
   }
 
   keyStore_.push(kemsg, sn, registryToExchange_);
+  metrics_->keyExchangedCounter.Get().Inc();
 
   return "ok";
 }

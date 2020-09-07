@@ -13,6 +13,8 @@
 
 #include "InternalBFTClient.h"
 #include "KeyStore.h"
+#include "Timers.hpp"
+#include "Metrics.hpp"
 
 namespace bftEngine::impl {
 class KeyManager {
@@ -21,9 +23,21 @@ class KeyManager {
                          const int id = 0,
                          const uint32_t clusterSize = 0,
                          IReservedPages* reservedPages = nullptr,
-                         const uint32_t sizeOfReservedPage = 0) {
-    static KeyManager km{cl, id, clusterSize, reservedPages, sizeOfReservedPage};
+                         const uint32_t sizeOfReservedPage = 0,
+                         concordUtil::Timers* timers = nullptr) {
+    static KeyManager km{cl, id, clusterSize, reservedPages, sizeOfReservedPage, *timers};
     return km;
+  }
+  static void start(InternalBFTClient* cl,
+                    const int id,
+                    const uint32_t clusterSize,
+                    IReservedPages* reservedPages,
+                    const uint32_t sizeOfReservedPage,
+                    concordUtil::Timers* timers,
+                    std::shared_ptr<concordMetrics::Aggregator> a,
+                    std::chrono::seconds interval) {
+    get(cl, id, clusterSize, reservedPages, sizeOfReservedPage, timers);
+    get().initMetrics(a, interval);
   }
 
   void sendKeyExchange();
@@ -40,7 +54,8 @@ class KeyManager {
              const int& id,
              const uint32_t& clusterSize,
              IReservedPages* reservedPages,
-             const uint32_t sizeOfReservedPage);
+             const uint32_t sizeOfReservedPage,
+             concordUtil::Timers& timers);
 
   uint16_t repID_{};
   uint32_t clusterSize_{};
@@ -50,6 +65,35 @@ class KeyManager {
 
   std::vector<IKeyExchanger*> registryToExchange_;
   ClusterKeyStore keyStore_;
+
+  //////////////////////////////////////////////////
+  // METRICS
+  struct Metrics {
+    std::chrono::seconds lastMetricsDumpTime;
+    std::chrono::seconds metricsDumpIntervalInSec;
+    std::shared_ptr<concordMetrics::Aggregator> aggregator;
+    concordMetrics::Component component;
+    concordMetrics::CounterHandle keyExchangedCounter;
+    concordMetrics::CounterHandle keyExchangedOnStartCounter;
+    void setAggregator(std::shared_ptr<concordMetrics::Aggregator> a) {
+      aggregator = a;
+      component.SetAggregator(aggregator);
+    }
+    Metrics(std::shared_ptr<concordMetrics::Aggregator> a, std::chrono::seconds interval)
+        : lastMetricsDumpTime{0},
+          metricsDumpIntervalInSec{interval},
+          aggregator(a),
+          component{"KeyManager", aggregator},
+          keyExchangedCounter{component.RegisterCounter("KeyExchangedCounter")},
+          keyExchangedOnStartCounter{component.RegisterCounter("KeyExchangedOnStartCounter")} {}
+  };
+
+  std::unique_ptr<Metrics> metrics_;
+  void initMetrics(std::shared_ptr<concordMetrics::Aggregator> a, std::chrono::seconds interval);
+  ///////////////////////////////////////////////////
+  // Timers
+  concordUtil::Timers::Handle metricsTimer_;
+  concordUtil::Timers& timers_;
 
   // deleted
   KeyManager(const KeyManager&) = delete;

@@ -3309,11 +3309,14 @@ void ReplicaImp::start() {
   ReplicaForStateTransfer::start();
 
   // requires the init of state transfer
-  KeyManager::get(internalBFTClient_.get(),
-                  config_.replicaId,
-                  config_.numReplicas,
-                  stateTransfer.get(),
-                  ReplicaConfigSingleton::GetInstance().GetSizeOfReservedPage());
+  KeyManager::start(internalBFTClient_.get(),
+                    config_.replicaId,
+                    config_.numReplicas,
+                    stateTransfer.get(),
+                    ReplicaConfigSingleton::GetInstance().GetSizeOfReservedPage(),
+                    &timers_,
+                    aggregator_,
+                    std::chrono::seconds(config_.metricsDumpIntervalSeconds));
   // If the replica has crashed and recovered by its own, this will remove the saved checkpoint to stop at.
   if (controlStateManager_ && controlStateManager_->getCheckpointToStopAt().has_value())
     controlStateManager_->clearCheckpointToStopAt();
