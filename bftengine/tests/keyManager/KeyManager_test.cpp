@@ -327,79 +327,162 @@ TEST(ClusterKeyStore, rotate) {
   cks.push(kem6, 155, v);
 
   // Checkpoint too close
-  ASSERT_EQ(cks.rotate(1, v), false);
-  // Should trigger two torations at 3 and 4
-  ASSERT_EQ(cks.rotate(2, v), true);
+  ASSERT_EQ(cks.rotate(1, v).empty(), true);
+  // Should trigger two rotations at 3 and 4
+  ASSERT_EQ(cks.rotate(2, v).empty(), false);
   ASSERT_EQ(((ExchangerMock*)v[0])->vmsg.size(), 2);
   ASSERT_EQ(((ExchangerMock*)v[0])->vmsg[0].key, cks.getReplicaKey(3).key);
   ASSERT_EQ(((ExchangerMock*)v[0])->vmsg[1].key, cks.getReplicaKey(4).key);
 }
 
-TEST(KeyManager, endToEnd) {
+struct DummyPathDetect : public IPathDetector {
+  bool ret{false};
+  bool isSlowPath(const uint64_t& sn) { return ret; }
+};
+
+struct DummyClient : public IinternalBFTClient {
+  inline NodeIdType getClientId() const { return 1; };
+  void sendRquest(uint8_t flags, uint32_t requestLength, const char* request, const std::string& cid) {}
+};
+
+struct DummyKeyGen : public IKeyGenerator {
+  virtual std::string getPublicKey() { return pub; }
+  virtual std::string getPrivateKey() { return prv; }
+  std::string prv;
+  std::string pub;
+};
+
+TEST(KeyManager, initialKeyExchange) {
+  DummyKeyGen dkg;
+  dkg.prv = "private";
+  dkg.pub = "public";
+  DummyPathDetect dpd;
+  DummyClient dc;
   ReservedPagesMock rpm(7, true);
   ExchangerMock em;
-  KeyManager::get(nullptr, 3, 4, &rpm, 4096);
-  KeyManager::get().registerForNotification(&em);
+  concordUtil::Timers timers;
+  TestKeyManager test{&dc, 3, 4, &rpm, 4096, &dpd, &dkg, nullptr, timers};
+  test.km_.registerForNotification(&em);
+  test.km_.sendInitialKey();
   KeyExchangeMsg kem;
   kem.key = "a";
   kem.signature = "1";
   kem.repID = 0;
-  KeyManager::get().onKeyExchange(kem, 2);
+  test.km_.onKeyExchange(kem, 2);
   KeyExchangeMsg kem2;
   kem2.key = "b";
   kem2.signature = "11";
   kem2.repID = 1;
-  KeyManager::get().onKeyExchange(kem2, 3);
-  KeyExchangeMsg kem3;
-  kem3.key = "c";
-  kem3.signature = "w1";
-  kem3.repID = 2;
-  KeyManager::get().onKeyExchange(kem3, 4);
+  test.km_.onKeyExchange(kem2, 3);
+
   KeyExchangeMsg kem4;
   kem4.key = "d";
   kem4.signature = "1";
   kem4.repID = 3;
-  KeyManager::get().onKeyExchange(kem4, 5);
-  ASSERT_EQ(KeyManager::get().getReplicaKey(0).key, "a");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(1).key, "b");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(2).key, "c");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(3).key, "d");
+  test.km_.onKeyExchange(kem4, 5);
+  // will return true to slow path and will ignore this msg
+  dpd.ret = true;
+  KeyExchangeMsg kem3;
+  kem3.key = "c";
+  kem3.signature = "w1";
+  kem3.repID = 2;
+  ASSERT_EQ(test.km_.keysExchanged, false);
+  ASSERT_EQ(test.getKeyExchangedOnStartCounter(), 3);
+  test.km_.onKeyExchange(kem3, 4);
+  ASSERT_EQ(test.km_.keysExchanged, false);
+  dpd.ret = false;
+  test.km_.onKeyExchange(kem3, 5);
+  ASSERT_EQ(test.getKeyExchangedOnStartCounter(), 4);
+  ASSERT_EQ(test.km_.keysExchanged, true);
+}
+
+TEST(KeyManager, endToEnd) {
+  DummyKeyGen dkg;
+  dkg.prv = "private";
+  dkg.pub = "public";
+  DummyPathDetect dpd;
+  DummyClient dc;
+  ReservedPagesMock rpm(4, true);
+  ExchangerMock em;
+  concordUtil::Timers timers;
+  TestKeyManager test{&dc, 2, 4, &rpm, 4096, &dpd, &dkg, nullptr, timers};
+  test.km_.registerForNotification(&em);
+  test.km_.sendInitialKey();
+  KeyExchangeMsg kem;
+  kem.key = "a";
+  kem.signature = "1";
+  kem.repID = 0;
+  test.km_.onKeyExchange(kem, 2);
+  KeyExchangeMsg kem2;
+  kem2.key = "b";
+  kem2.signature = "11";
+  kem2.repID = 1;
+  test.km_.onKeyExchange(kem2, 3);
+  KeyExchangeMsg kem3;
+  kem3.key = "c";
+  kem3.signature = "w1";
+  kem3.repID = 2;
+  test.km_.onKeyExchange(kem3, 4);
+  KeyExchangeMsg kem4;
+  kem4.key = "d";
+  kem4.signature = "1";
+  kem4.repID = 3;
+  ASSERT_EQ(test.km_.keysExchanged, false);
+  test.km_.onKeyExchange(kem4, 5);
+  ASSERT_EQ(test.km_.keysExchanged, true);
+  ASSERT_EQ(test.km_.getPrivateKey(), "private");
+  ASSERT_EQ(test.km_.getReplicaKey(0).key, "a");
+  ASSERT_EQ(test.km_.getReplicaKey(1).key, "b");
+  ASSERT_EQ(test.km_.getReplicaKey(2).key, "c");
+  ASSERT_EQ(test.km_.getReplicaKey(3).key, "d");
   // Should not rotate any key
-  KeyManager::get().onCheckpoint(2);
-  ASSERT_EQ(KeyManager::get().getReplicaKey(0).key, "a");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(1).key, "b");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(2).key, "c");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(3).key, "d");
+  test.km_.onCheckpoint(2);
+  ASSERT_EQ(test.getPublicKeyRotated(), 0);
+  ASSERT_EQ(test.km_.getReplicaKey(0).key, "a");
+  ASSERT_EQ(test.km_.getReplicaKey(1).key, "b");
+  ASSERT_EQ(test.km_.getReplicaKey(2).key, "c");
+  ASSERT_EQ(test.km_.getReplicaKey(3).key, "d");
   ASSERT_EQ(em.vmsg.size(), 0);
 
+  dkg.prv = "private2";
+  dkg.pub = "public2";
+  test.km_.sendKeyExchange();
   KeyExchangeMsg kem5;
   kem5.key = "aaaa";
   kem5.signature = "1";
   kem5.repID = 0;
-  KeyManager::get().onKeyExchange(kem5, 22);
+  test.km_.onKeyExchange(kem5, 22);
   KeyExchangeMsg kem6;
   kem6.key = "bbbb";
   kem6.signature = "11";
   kem6.repID = 1;
-  KeyManager::get().onKeyExchange(kem6, 33);
+  test.km_.onKeyExchange(kem6, 33);
   KeyExchangeMsg kem7;
   kem7.key = "ccccc";
   kem7.signature = "w1";
   kem7.repID = 2;
-  KeyManager::get().onKeyExchange(kem7, 34);
+  test.km_.onKeyExchange(kem7, 34);
   // Checkpoint too close, should not rotate
-  KeyManager::get().onCheckpoint(1);
-  ASSERT_EQ(KeyManager::get().getReplicaKey(0).key, "a");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(1).key, "b");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(2).key, "c");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(3).key, "d");
+  test.km_.onCheckpoint(1);
+  ASSERT_EQ(test.getPublicKeyRotated(), 0);
+  ASSERT_EQ(test.km_.getPrivateKey(), "private");
+  ASSERT_EQ(test.km_.getReplicaKey(0).key, "a");
+  ASSERT_EQ(test.km_.getReplicaKey(1).key, "b");
+  ASSERT_EQ(test.km_.getReplicaKey(2).key, "c");
   ASSERT_EQ(em.vmsg.size(), 0);
+  KeyExchangeMsg kem8;
+  kem8.key = "ddddd";
+  kem8.signature = "w1";
+  kem8.repID = 3;
+  test.km_.onKeyExchange(kem8, 180);
   // now should rotate 0,1,2
-  KeyManager::get().onCheckpoint(2);
-  ASSERT_EQ(KeyManager::get().getReplicaKey(0).key, "aaaa");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(1).key, "bbbb");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(2).key, "ccccc");
-  ASSERT_EQ(KeyManager::get().getReplicaKey(3).key, "d");
+  test.km_.onCheckpoint(2);
+  ASSERT_EQ(test.getPublicKeyRotated(), 3);
+  ASSERT_EQ(test.km_.getPrivateKey(), "private2");
+  ASSERT_EQ(test.km_.getReplicaKey(0).key, "aaaa");
+  ASSERT_EQ(test.km_.getReplicaKey(1).key, "bbbb");
+  ASSERT_EQ(test.km_.getReplicaKey(2).key, "ccccc");
+  ASSERT_EQ(test.km_.getReplicaKey(3).key, "d");
   ASSERT_EQ(em.vmsg.size(), 3);
 }
 
@@ -519,6 +602,53 @@ TEST(ClusterKeyStore, clean_first_load_save_keys_rotate_and_reload) {
     }
     ASSERT_EQ(reloadCks.numKeys(i), 1);
   }
+}
+
+class DummyLoaderSaver : public ISaverLoader {
+ public:
+  std::string cache;
+  void save(const std::string& s) { cache = s; };
+  std::string load() { return cache; }
+};
+
+TEST(PrivateKeys, ser_der) {
+  KeyManager::PrivateKeys keys;
+  keys.publishPrivateKey = "publish";
+  keys.outstandingPrivateKey = "outstandingPrivateKey";
+  keys.privateKey = "privateKey";
+
+  std::stringstream ss;
+  concord::serialize::Serializable::serialize(ss, keys);
+  auto strMsg = ss.str();
+
+  KeyManager::PrivateKeys keys2;
+
+  ss.write(strMsg.c_str(), std::streamsize(strMsg.size()));
+  concord::serialize::Serializable::deserialize(ss, keys2);
+
+  ASSERT_EQ(keys.publishPrivateKey, keys2.publishPrivateKey);
+  ASSERT_EQ(keys.outstandingPrivateKey, keys2.outstandingPrivateKey);
+  ASSERT_EQ(keys.privateKey, keys2.privateKey);
+}
+
+TEST(PrivateKeys, SaveLoad) {
+  std::shared_ptr<ISaverLoader> dls(new DummyLoaderSaver());
+  KeyManager::PrivateKeys keys;
+  keys.sl.swap(dls);
+  keys.publishPrivateKey = "publish";
+  keys.outstandingPrivateKey = "outstandingPrivateKey";
+  keys.privateKey = "privateKey";
+
+  keys.save();
+  keys.publishPrivateKey = "";
+  keys.outstandingPrivateKey = "";
+  keys.privateKey = "";
+
+  keys.load();
+
+  ASSERT_EQ(keys.publishPrivateKey, "publish");
+  ASSERT_EQ(keys.outstandingPrivateKey, "outstandingPrivateKey");
+  ASSERT_EQ(keys.privateKey, "privateKey");
 }
 
 TEST(KeyManager, reserved_pages) {}

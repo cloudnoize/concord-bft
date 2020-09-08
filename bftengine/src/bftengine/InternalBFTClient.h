@@ -16,8 +16,14 @@
 
 namespace bftEngine {
 namespace impl {
+class IinternalBFTClient {
+ public:
+  virtual ~IinternalBFTClient() {}
+  virtual NodeIdType getClientId() const = 0;
+  virtual void sendRquest(uint8_t flags, uint32_t requestLength, const char* request, const std::string& cid) = 0;
+};
 
-class InternalBFTClient {
+class InternalBFTClient : public IinternalBFTClient {
  public:
   InternalBFTClient(const int& id, const NodeIdType& nonInternalNum, std::shared_ptr<MsgsCommunicator>& msgComm);
   inline NodeIdType getClientId() const { return repID_ + startIdForInternalClient_; };

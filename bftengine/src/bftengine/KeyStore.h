@@ -88,7 +88,7 @@ class ClusterKeyStore : public ResPagesClient<ClusterKeyStore, 2> {
   ClusterKeyStore(const uint32_t& clusterSize, IReservedPages& reservedPages, const uint32_t& sizeOfReservedPage);
   bool push(const KeyExchangeMsg& kem, const uint64_t& sn, const std::vector<IKeyExchanger*>& registryToExchange);
   // iterate on all replcias
-  bool rotate(const uint64_t& chknum, const std::vector<IKeyExchanger*>& registryToExchange);
+  std::vector<uint16_t> rotate(const uint64_t& chknum, const std::vector<IKeyExchanger*>& registryToExchange);
   KeyExchangeMsg getReplicaKey(const uint16_t& repID) const;
   uint16_t numKeys(const uint16_t& repID) const { return clusterKeys_[repID].numKeys(); }
 

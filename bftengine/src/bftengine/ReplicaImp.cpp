@@ -3204,6 +3204,7 @@ ReplicaImp::ReplicaImp(bool firstTime,
 
   mainLog =
       new SequenceWithActiveWindow<kWorkWindowSize, 1, SeqNum, SeqNumInfo, SeqNumInfo>(1, (InternalReplicaApi *)this);
+  pathDetector_.reset(new LogPathDetector(mainLog));
 
   checkpointsLog = new SequenceWithActiveWindow<kWorkWindowSize + 2 * checkpointWindowSize,
                                                 checkpointWindowSize,
@@ -3309,11 +3310,17 @@ void ReplicaImp::start() {
   ReplicaForStateTransfer::start();
 
   // requires the init of state transfer
-  KeyManager::get(internalBFTClient_.get(),
-                  config_.replicaId,
-                  config_.numReplicas,
-                  stateTransfer.get(),
-                  ReplicaConfigSingleton::GetInstance().GetSizeOfReservedPage());
+  KeyManager::start(internalBFTClient_.get(),
+                    config_.replicaId,
+                    config_.numReplicas,
+                    stateTransfer.get(),
+                    ReplicaConfigSingleton::GetInstance().GetSizeOfReservedPage(),
+                    pathDetector_.get(),
+                    &CryptoManager::instance(),
+                    nullptr,
+                    &timers_,
+                    aggregator_,
+                    std::chrono::seconds(config_.metricsDumpIntervalSeconds));
   // If the replica has crashed and recovered by its own, this will remove the saved checkpoint to stop at.
   if (controlStateManager_ && controlStateManager_->getCheckpointToStopAt().has_value())
     controlStateManager_->clearCheckpointToStopAt();
@@ -3324,6 +3331,9 @@ void ReplicaImp::start() {
   // The following line will start the processing thread.
   // It must happen after the replica recovers requests in the main thread.
   msgsCommunicator_->startMsgsProcessing(config_.replicaId);
+  if (ReplicaConfigSingleton::GetInstance().GetKeyExchangeOnStart()) {
+    KeyManager::get().sendInitialKey();
+  }
 }
 
 void ReplicaImp::recoverRequests() {

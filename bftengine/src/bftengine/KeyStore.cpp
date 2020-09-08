@@ -151,7 +151,7 @@ void ClusterKeyStore::loadAllReplicasKeyStoresFromReservedPages() {
   // Unless for some reason we crashed before completing full exchange
   // TODO decide how we want to handle this error.
   if (exchangedReplicas.size() > 0 && exchangedReplicas.size() < clusterKeys_.size()) {
-    LOG_ERROR(KEY_EX_LOG, "Partial set of replicas kyes were loaded from reserved pages");
+    LOG_WARN(KEY_EX_LOG, "Partial set of replicas kyes were loaded from reserved pages");
   }
 }
 
@@ -198,16 +198,18 @@ bool ClusterKeyStore::push(const KeyExchangeMsg& kem,
   for (auto ike : registryToExchange) {
     ike->onNewKey(clusterKeys_[kem.repID].current().msg);
   }
+  LOG_DEBUG(KEY_EX_LOG, "pushed key " << kem.toString());
   saveReplicaKeyStoreToReserevedPages(kem.repID);
   return true;
 }
 
-bool ClusterKeyStore::rotate(const uint64_t& chknum, const std::vector<IKeyExchanger*>& registryToExchange) {
-  bool ret{};
+std::vector<uint16_t> ClusterKeyStore::rotate(const uint64_t& chknum,
+                                              const std::vector<IKeyExchanger*>& registryToExchange) {
+  std::vector<uint16_t> ret;
   uint16_t idx = 0;
   for (auto& replicaKeyStore : clusterKeys_) {
     if (!replicaKeyStore.rotate(chknum)) continue;
-    ret = true;
+    ret.push_back(idx);
     // Notify registry on exchange for replica
     LOG_DEBUG(KEY_EX_LOG, "Notifying registry for exchange for replica " << idx << " at checkoint " << chknum);
     for (auto ike : registryToExchange) {

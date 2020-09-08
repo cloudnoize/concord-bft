@@ -16,10 +16,11 @@
 #include "threshsign/IThresholdSigner.h"
 #include "threshsign/IThresholdVerifier.h"
 #include "ReplicaConfig.hpp"
+#include "bftengine/MultiSignatureInterfaces.hpp"
 
 namespace bftEngine {
 
-class CryptoManager {
+class CryptoManager : public IKeyGenerator {
  public:
   static CryptoManager& instance(const ReplicaConfig* config = nullptr, Cryptosystem* cryptoSys = nullptr) {
     static CryptoManager cm_(config, cryptoSys);
@@ -36,6 +37,8 @@ class CryptoManager {
   IThresholdVerifier* thresholdVerifierForOptimisticCommit() const {
     return thresholdVerifierForOptimisticCommit_.get();
   }
+  std::string getPublicKey() { return thresholdSignerForCommit()->getShareVerificationKey().toString(); }
+  std::string getPrivateKey() { return thresholdSignerForCommit()->getShareSecretKey().toString(); }
 
  private:
   CryptoManager(const ReplicaConfig* config, Cryptosystem* cryptoSys) {

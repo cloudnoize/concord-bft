@@ -32,6 +32,7 @@
 #include "OpenTracing.hpp"
 #include "RequestHandler.h"
 #include "InternalBFTClient.h"
+#include "bftengine/MultiSignatureInterfaces.hpp"
 
 namespace bftEngine::impl {
 
@@ -103,6 +104,7 @@ class ReplicaImp : public InternalReplicaApi, public ReplicaForStateTransfer {
   // bounded log used to store information about SeqNums in the range (lastStableSeqNum,lastStableSeqNum +
   // kWorkWindowSize]
   SequenceWithActiveWindow<kWorkWindowSize, 1, SeqNum, SeqNumInfo, SeqNumInfo>* mainLog = nullptr;
+  std::unique_ptr<IPathDetector> pathDetector_;
 
   // bounded log used to store information about checkpoints in the range [lastStableSeqNum,lastStableSeqNum +
   // kWorkWindowSize]
