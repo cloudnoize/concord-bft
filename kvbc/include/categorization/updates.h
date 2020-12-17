@@ -35,6 +35,7 @@ namespace concord::kvbc::categorization {
 struct SharedKeyValueUpdates {
   SharedKeyValueUpdates() = default;
   SharedKeyValueUpdates(SharedKeyValueUpdates&& other) = default;
+  SharedKeyValueUpdates(SharedKeyValueUpdatesData&& data) : data_{std::move(data)} {}
   SharedKeyValueUpdates& operator=(SharedKeyValueUpdates&& other) = default;
 
   // Do not allow copy
@@ -70,6 +71,7 @@ struct SharedKeyValueUpdates {
 struct KeyValueUpdates {
   KeyValueUpdates() = default;
   KeyValueUpdates(KeyValueUpdates&& other) = default;
+  KeyValueUpdates(KeyValueUpdatesData&& data) : data_{std::move(data)} {}
   KeyValueUpdates& operator=(KeyValueUpdates&& other) = default;
 
   // Do not allow copy
@@ -118,6 +120,7 @@ struct KeyValueUpdates {
 struct MerkleUpdates {
   MerkleUpdates() = default;
   MerkleUpdates(MerkleUpdates&& other) = default;
+  MerkleUpdates(MerkleUpdatesData&& data) : data_{std::move(data)} {}
   MerkleUpdates& operator=(MerkleUpdates&& other) = default;
 
   // Do not allow copy
@@ -173,8 +176,8 @@ struct Updates {
 
  private:
   friend class KeyValueBlockchain;
-  std::optional<SharedKeyValueUpdatesData> shared_update_;
   std::map<std::string, std::variant<MerkleUpdatesData, KeyValueUpdatesData>> category_updates_;
+  std::optional<SharedKeyValueUpdatesData> shared_update_;
 };
 
 }  // namespace concord::kvbc::categorization

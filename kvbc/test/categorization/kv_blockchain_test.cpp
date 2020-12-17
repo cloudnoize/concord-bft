@@ -229,6 +229,47 @@ TEST_F(categorized_kvbc, delete_block) {
   ASSERT_THROW(block_chain.deleteLastReachableBlock(), std::runtime_error);
 }
 
+TEST_F(categorized_kvbc, get_last_and_genesis_block) {
+  KeyValueBlockchain block_chain{db};
+  detail::Blockchain block_chain_imp{db};
+  // Add block1
+  {
+    Updates updates;
+    MerkleUpdates merkle_updates;
+    merkle_updates.addUpdate("merkle_key1", "merkle_value1");
+    merkle_updates.addDelete("merkle_deleted");
+    updates.add("merkle", std::move(merkle_updates));
+
+    KeyValueUpdates keyval_updates;
+    keyval_updates.addUpdate("kv_key1", "key_val1");
+    keyval_updates.addDelete("kv_deleted");
+    updates.add("kv_hash", std::move(keyval_updates));
+    ASSERT_EQ(block_chain.addBlock(std::move(updates)), (BlockId)1);
+  }
+  // Add block2
+  {
+    Updates updates;
+    MerkleUpdates merkle_updates;
+    merkle_updates.addUpdate("merkle_key2", "merkle_value2");
+    merkle_updates.addDelete("merkle_deleted");
+    updates.add("merkle", std::move(merkle_updates));
+
+    KeyValueUpdates keyval_updates;
+    keyval_updates.addUpdate("kv_key2", "key_val2");
+    keyval_updates.addDelete("kv_deleted");
+    updates.add("kv_hash", std::move(keyval_updates));
+
+    SharedKeyValueUpdates shared_updates;
+    shared_updates.addUpdate("shared_key2", {"shared_Val2", {"1", "2"}});
+    updates.add(std::move(shared_updates));
+    ASSERT_EQ(block_chain.addBlock(std::move(updates)), (BlockId)2);
+  }
+  ASSERT_TRUE(block_chain_imp.loadLastReachableBlockId().has_value());
+  ASSERT_EQ(block_chain_imp.loadLastReachableBlockId().value(), 2);
+  ASSERT_TRUE(block_chain_imp.loadGenesisBlockId().has_value());
+  ASSERT_EQ(block_chain_imp.loadGenesisBlockId().value(), 1);
+}
+
 }  // end namespace
 
 int main(int argc, char** argv) {

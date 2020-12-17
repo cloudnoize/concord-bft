@@ -22,10 +22,21 @@ namespace concord::kvbc::categorization {
 BlockId KeyValueBlockchain::addBlock(Updates&& updates) {
   // Use new client batch and column families
   auto write_batch = native_client_->getBatch();
+  auto block_id = addBlock(std::move(updates.category_updates_), std::move(updates.shared_update_), write_batch);
+  block_chain_.setAddedBlockId(block_id);
+  native_client_->write(std::move(write_batch));
+  return block_id;
+}
+
+BlockId KeyValueBlockchain::addBlock(
+    std::map<std::string, std::variant<MerkleUpdatesData, KeyValueUpdatesData>>&& category_updates,
+    std::optional<SharedKeyValueUpdatesData>&& shared_update,
+    concord::storage::rocksdb::NativeWriteBatch& write_batch) {
+  // Use new client batch and column families
   Block new_block{block_chain_.getLastReachableBlockId() + 1};
   // auto parentBlockDigestFuture = computeParentBlockDigest(new_block.ID( ));
   // Per category updates
-  for (auto&& [category_id, update] : updates.category_updates_) {
+  for (auto&& [category_id, update] : category_updates) {
     // https://stackoverflow.com/questions/46114214/lambda-implicit-capture-fails-with-variable-declared-from-structured-binding
     std::visit(
         [&new_block, category_id = category_id, &write_batch, this](auto& update) {
@@ -34,15 +45,13 @@ BlockId KeyValueBlockchain::addBlock(Updates&& updates) {
         },
         update);
   }
-  if (updates.shared_update_.has_value()) {
-    auto block_updates = handleCategoryUpdates(new_block.id(), std::move(updates.shared_update_.value()), write_batch);
+  if (shared_update.has_value()) {
+    auto block_updates = handleCategoryUpdates(new_block.id(), std::move(shared_update.value()), write_batch);
     new_block.add(std::move(block_updates));
   }
   // newBlock.parentDigest = parentBlockDigestFuture.get();
   block_chain_.addBlock(new_block, write_batch);
   write_batch.put(detail::BLOCKS_CF, Block::generateKey(new_block.id()), Block::serialize(new_block));
-  native_client_->write(std::move(write_batch));
-  block_chain_.setAddedBlockId(new_block.id());
   return new_block.id();
 }
 
@@ -86,9 +95,7 @@ void KeyValueBlockchain::deleteStateTransferBlock(const BlockId block_id) {
   auto write_batch = native_client_->getBatch();
   state_transfer_block_chain_.deleteBlock(block_id, write_batch);
   native_client_->write(std::move(write_batch));
-  if (!state_transfer_block_chain_.getLastBlockId()) {
-    state_transfer_block_chain_.loadLastBlockId();
-  }
+  state_transfer_block_chain_.updateLastIdAfterDeletion(block_id);
 }
 
 // 1 - Get genesis block form DB.
@@ -243,6 +250,80 @@ SharedKeyValueUpdatesInfo KeyValueBlockchain::handleCategoryUpdates(
     skvui.keys[k] = SharedKeyData{v.category_ids};
   }
   return skvui;
+}
+
+/////////////////////// state transfer blockchain ///////////////////////
+
+
+void KeyValueBlockchain::addRawBlock(RawBlock& block, const BlockId& block_id) {
+  const auto last_reachable_block = getLastReachableBlockId();
+  if (block_id <= last_reachable_block) {
+    const auto msg = "Cannot add an existing block ID " + std::to_string(block_id);
+    throw std::invalid_argument{msg};
+  }
+
+  auto write_batch = native_client_->getBatch();
+  state_transfer_block_chain_.addBlock(block_id, block, write_batch);
+  native_client_->write(std::move(write_batch));
+  // Update the cached latest ST temporary block ID if we have received and persisted such a block.
+  state_transfer_block_chain_.updateLastId(block_id);
+
+  try {
+    linkSTChainFrom(last_reachable_block + 1);
+  } catch (const std::exception& e) {
+    // LOG_FATAL(logger_, "Aborting due to failure to link chains after block has been added, reason: "s + e.what());
+    std::terminate();
+  } catch (...) {
+    // LOG_FATAL(logger_, "Aborting due to failure to link chains after block has been added");
+    std::terminate();
+  }
+}
+
+RawBlock KeyValueBlockchain::getRawBlock(const BlockId& block_id) const {
+  const auto last_reachable_block = getLastReachableBlockId();
+
+  // Try to take it from the ST chain
+  if (block_id > last_reachable_block) {
+    auto raw_block = state_transfer_block_chain_.getRawBlock(block_id);
+    if (!raw_block) {
+      // E.L throw or optional?
+      throw std::runtime_error{"Failed to get block node ID = " + std::to_string(block_id)};
+    }
+    return *raw_block;
+  }
+
+  // Try from the blockchain itself
+  auto raw_block = block_chain_.getRawBlock(block_id);
+  if (!raw_block) {
+    throw std::runtime_error{"Failed to get block node ID = " + std::to_string(block_id)};
+  }
+  return *raw_block;
+}
+
+// tries to remove blocks form the state transfer chain to the blockchain
+void KeyValueBlockchain::linkSTChainFrom(BlockId block_id) {
+  const auto last_block_id = state_transfer_block_chain_.getLastBlockId();
+  if (!last_block_id) return;
+
+  for (auto i = block_id; i <= *last_block_id; ++i) {
+    auto raw_block = state_transfer_block_chain_.getRawBlock(block_id);
+    if (!raw_block) {
+      return;
+    }
+    writeSTLinkTransaction(block_id, *raw_block);
+  }
+  // Linking has fully completed and we should not have any more ST temporary blocks left. Therefore, make sure we don't
+  // have any value for the latest ST temporary block ID cache.
+  state_transfer_block_chain_.resetChain();
+}
+
+// Atmoic delete from state transfer and add to blockchain
+void KeyValueBlockchain::writeSTLinkTransaction(const BlockId block_id, RawBlock& block) {
+  auto write_batch = native_client_->getBatch();
+  state_transfer_block_chain_.deleteBlock(block_id, write_batch);
+  addBlock(std::move(block.data.category_updates), std::move(block.data.shared_update), write_batch);
+  block_chain_.setAddedBlockId(block_id);
+  native_client_->write(std::move(write_batch));
 }
 
 }  // namespace concord::kvbc::categorization

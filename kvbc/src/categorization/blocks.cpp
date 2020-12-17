@@ -25,13 +25,13 @@ RawBlock::RawBlock(const Block& block, const storage::rocksdb::NativeClient& nat
   for (auto& [cat_id, update_info] : block.data.categories_updates_info) {
     std::visit(
         [category_id = cat_id, &block, this, &native_client](const auto& update_info) {
-          auto category_updates = getRawUpdates(category_id, update_info, block.id(), native_client);
+          auto category_updates = getUpdates(category_id, update_info, block.id(), native_client);
           data.category_updates.emplace(category_id, std::move(category_updates));
         },
         update_info);
   }
   if (block.data.shared_updates_info.has_value()) {
-    data.shared_update = getRawSharedUpdates(block.data.shared_updates_info.value(), block.id(), native_client);
+    data.shared_update = getUpdates(block.data.shared_updates_info.value(), block.id(), native_client);
   }
 }
 
@@ -39,22 +39,20 @@ RawBlock::RawBlock(const Block& block, const storage::rocksdb::NativeClient& nat
 // This set methods are overloaded in order to construct the appropriate updates
 
 // Merkle updates reconstruction
-RawBlockMerkleUpdates RawBlock::getRawUpdates(const std::string& category_id,
-                                              const MerkleUpdatesInfo& update_info,
-                                              const BlockId& block_id,
-                                              const storage::rocksdb::NativeClient& native_client) {
+MerkleUpdatesData RawBlock::getUpdates(const std::string& category_id,
+                                       const MerkleUpdatesInfo& update_info,
+                                       const BlockId& block_id,
+                                       const storage::rocksdb::NativeClient& native_client) {
   // For old serialization
   using namespace concord::kvbc::v2MerkleTree;
-  RawBlockMerkleUpdates data;
-  // Copy state hash (std::copy?)
-  data.root_hash = update_info.root_hash;
+  MerkleUpdatesData data;
   // Iterate over the keys:
   // if deleted, add to the deleted set.
   // else generate a db key, serialize it and
   // get the value from the corresponding column family
   for (auto& [key, flag] : update_info.keys) {
     if (flag.deleted) {
-      data.updates.deletes.push_back(key);
+      data.deletes.push_back(key);
       continue;
     }
     // E.L see how we can optimize the sliver temporary allocation
@@ -69,26 +67,26 @@ RawBlockMerkleUpdates RawBlock::getRawUpdates(const std::string& category_id,
         concordUtils::Sliver{std::move(val.value())});
     ConcordAssert(dbLeafVal.addedInBlockId == block_id);
 
-    data.updates.kv[key] = dbLeafVal.leafNode.value.toString();
+    data.kv[key] = dbLeafVal.leafNode.value.toString();
   }
 
   return data;
 }
 
 // KeyValueUpdatesData updates reconstruction
-RawBlockKeyValueUpdates RawBlock::getRawUpdates(const std::string& category_id,
-                                                const KeyValueUpdatesInfo& update_info,
-                                                const BlockId& block_id,
-                                                const storage::rocksdb::NativeClient& native_client) {
-  RawBlockKeyValueUpdates data;
+KeyValueUpdatesData RawBlock::getUpdates(const std::string& category_id,
+                                         const KeyValueUpdatesInfo& update_info,
+                                         const BlockId& block_id,
+                                         const storage::rocksdb::NativeClient& native_client) {
+  KeyValueUpdatesData data;
   return data;
 }
 
 // shared updates reconstruction
-RawBlockSharedUpdates RawBlock::getRawSharedUpdates(const SharedKeyValueUpdatesInfo& update_info,
-                                                    const BlockId& block_id,
-                                                    const storage::rocksdb::NativeClient& native_client) {
-  RawBlockSharedUpdates data;
+SharedKeyValueUpdatesData RawBlock::getUpdates(const SharedKeyValueUpdatesInfo& update_info,
+                                               const BlockId& block_id,
+                                               const storage::rocksdb::NativeClient& native_client) {
+  SharedKeyValueUpdatesData data;
   return data;
 }
 

@@ -37,11 +37,22 @@ class KeyValueBlockchain {
   bool deleteBlock(const BlockId& blockId);
   void deleteLastReachableBlock();
 
+  /////////////////////// Raw Blocks ///////////////////////
+  void addRawBlock(RawBlock& block, const BlockId& block_id);
+  RawBlock getRawBlock(const BlockId& block_id) const;
+
   /////////////////////// Info ///////////////////////
   inline BlockId getGenesisBlockId() { return block_chain_.getGenesisBlockId(); }
-  inline BlockId getLastReachableBlockId() { return block_chain_.getLastReachableBlockId(); }
+  inline BlockId getLastReachableBlockId() const { return block_chain_.getLastReachableBlockId(); }
 
  private:
+  BlockId addBlock(std::map<std::string, std::variant<MerkleUpdatesData, KeyValueUpdatesData>>&& category_updates,
+                   std::optional<SharedKeyValueUpdatesData>&& shared_update,
+                   concord::storage::rocksdb::NativeWriteBatch& write_batch);
+
+  void linkSTChainFrom(BlockId block_id);
+  void writeSTLinkTransaction(const BlockId block_id, RawBlock& block);
+
   void deleteStateTransferBlock(const BlockId block_id);
   void deleteGenesisBlock();
 
