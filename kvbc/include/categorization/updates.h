@@ -59,11 +59,19 @@ struct ImmutableUpdates {
     friend struct ImmutableUpdates;
   };
 
-  void addUpdate(std::string&& key, ImmutableValue&& val) { data_.kv.emplace(std::move(key), std::move(val.update_)); }
+  void addUpdate(std::string&& key, ImmutableValue&& val, bool allow_update = false) {
+    if (allow_update && data_.kv.count(key) == 1) {
+      data_.kv[key] = std::move(val.update_);
+      return;
+    }
+    data_.kv.emplace(std::move(key), std::move(val.update_));
+  }
 
   void calculateRootHash(const bool hash) { data_.calculate_root_hash = hash; }
 
   size_t size() const { return data_.kv.size(); }
+
+  const ImmutableInput& getData() const { return data_; }
 
  private:
   ImmutableInput data_;
@@ -89,12 +97,20 @@ struct VersionedUpdates {
     bool stale_on_update{false};
   };
 
-  void addUpdate(std::string&& key, Value&& val) {
+  void addUpdate(std::string&& key, Value&& val, bool allow_update = false) {
+    if (allow_update && data_.kv.count(key) == 1) {
+      data_.kv[key] = ValueWithFlags{std::move(val.data), val.stale_on_update};
+      return;
+    }
     data_.kv.emplace(std::move(key), ValueWithFlags{std::move(val.data), val.stale_on_update});
   }
 
   // Set a value with no flags set
-  void addUpdate(std::string&& key, std::string&& val) {
+  void addUpdate(std::string&& key, std::string&& val, bool allow_update = false) {
+    if (allow_update && data_.kv.count(key) == 1) {
+      data_.kv[key] = ValueWithFlags{std::move(val), false};
+      return;
+    }
     data_.kv.emplace(std::move(key), ValueWithFlags{std::move(val), false});
   }
 
@@ -110,6 +126,8 @@ struct VersionedUpdates {
   void calculateRootHash(const bool hash) { data_.calculate_root_hash = hash; }
 
   std::size_t size() const { return data_.kv.size(); }
+
+  const VersionedInput& getData() const { return data_; }
 
  private:
   VersionedInput data_;
@@ -129,7 +147,13 @@ struct BlockMerkleUpdates {
   BlockMerkleUpdates(BlockMerkleUpdates& other) = delete;
   BlockMerkleUpdates& operator=(BlockMerkleUpdates& other) = delete;
 
-  void addUpdate(std::string&& key, std::string&& val) { data_.kv.emplace(std::move(key), std::move(val)); }
+  void addUpdate(std::string&& key, std::string&& val, bool allow_update = false) {
+    if (allow_update && data_.kv.count(key) == 1) {
+      data_.kv[key] = std::move(val);
+      return;
+    }
+    data_.kv.emplace(std::move(key), std::move(val));
+  }
 
   void addDelete(std::string&& key) {
     if (const auto [itr, inserted] = unique_deletes_.insert(key); !inserted) {
@@ -140,7 +164,7 @@ struct BlockMerkleUpdates {
     data_.deletes.emplace_back(std::move(key));
   }
 
-  const BlockMerkleInput& getData() { return data_; }
+  const BlockMerkleInput& getData() const { return data_; }
 
   std::size_t size() const { return data_.kv.size(); }
 
