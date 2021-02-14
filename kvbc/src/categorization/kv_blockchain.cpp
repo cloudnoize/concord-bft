@@ -90,7 +90,11 @@ BlockId KeyValueBlockchain::addBlock(Updates&& updates) {
 BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
                                      concord::storage::rocksdb::NativeWriteBatch& write_batch) {
   // Use new client batch and column families
+  const auto& ser_buff = detail::serializeThreadLocal(category_updates);
+  std::string str_ser_buff(ser_buff.begin(), ser_buff.end());
+
   Block new_block{block_chain_.getLastReachableBlockId() + 1};
+  LOG_INFO(DEBUGGING_LOG, "updates of " << new_block.id() << " digest " << std::hash<std::string>{}(str_ser_buff));
   auto parent_digest_future = computeParentBlockDigest(new_block.id(), std::move(last_raw_block_));
   // initialize the raw block for the next call to computeParentBlockDigest
   auto& last_raw_block = last_raw_block_.second.emplace();
@@ -107,6 +111,10 @@ BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
         std::move(update));
   }
   new_block.data.parent_digest = parent_digest_future.get();
+  LOG_INFO(
+      DEBUGGING_LOG,
+      "parent_block_digest " << std::string(new_block.data.parent_digest.begin(), new_block.data.parent_digest.end())
+                             << " for block " << new_block.id());
   last_raw_block.parent_digest = new_block.data.parent_digest;
   block_chain_.addBlock(new_block, write_batch);
   LOG_DEBUG(CAT_BLOCK_LOG, "Writing block [" << new_block.id() << "] to the blocks cf");
@@ -120,12 +128,14 @@ std::future<BlockDigest> KeyValueBlockchain::computeParentBlockDigest(const Bloc
   // if we have a cached raw block and it matches the parent_block_id then use it.
   if (cached_raw_block.second && cached_raw_block.first == parent_block_id) {
     LOG_DEBUG(CAT_BLOCK_LOG, "Using cached raw block for computing parent digest");
+    LOG_INFO(DEBUGGING_LOG, "Using cached raw block for computing parent digest for block " << block_id);
   }
   // cached raw block is unusable, get the raw block from storage
   else if (block_id > INITIAL_GENESIS_BLOCK_ID) {
     auto parent_raw_block = getRawBlock(parent_block_id);
     ConcordAssert(parent_raw_block.has_value());
     cached_raw_block.second = std::move(parent_raw_block->data);
+    LOG_INFO(DEBUGGING_LOG, "Using block from DB for computing parent digest for block " << block_id);
   }
   // it's the first block, we don't have a parent
   else {
