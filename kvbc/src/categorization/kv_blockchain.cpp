@@ -111,10 +111,10 @@ BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
         std::move(update));
   }
   new_block.data.parent_digest = parent_digest_future.get();
-  LOG_INFO(
-      DEBUGGING_LOG,
-      "parent_block_digest " << std::string(new_block.data.parent_digest.begin(), new_block.data.parent_digest.end())
-                             << " for block " << new_block.id());
+  LOG_INFO(DEBUGGING_LOG,
+           "parent_block_digest " << std::hash<std::string>{}(std::string(new_block.data.parent_digest.begin(),
+                                                                          new_block.data.parent_digest.end()))
+                                  << " for block " << new_block.id());
   last_raw_block.parent_digest = new_block.data.parent_digest;
   block_chain_.addBlock(new_block, write_batch);
   LOG_DEBUG(CAT_BLOCK_LOG, "Writing block [" << new_block.id() << "] to the blocks cf");
