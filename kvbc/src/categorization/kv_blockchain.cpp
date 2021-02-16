@@ -74,6 +74,91 @@ void KeyValueBlockchain::instantiateCategories() {
   }
 }
 
+void printcat(const BlockMerkleInput& m) {
+  // LOG_INFO(DEBUGGING_LOG, "Merkle ");
+  // for(auto [k,v] : m.kv){
+  //   LOG_INFO(DEBUGGING_LOG, "key " << std::hash<std::string>{}(k) << " val " << std::hash<std::string>{}(v));
+  // }
+  // LOG_INFO(DEBUGGING_LOG, "deltes ");
+  // for(auto k : m.deletes){
+  //   LOG_INFO(DEBUGGING_LOG, "del key " << std::hash<std::string>{}(k));
+  // }
+  const auto& raw_buffer = detail::serialize(m);
+  LOG_ERROR(CAT_BLOCK_LOG,
+            "merkle hash " << std::hash<std::string>{}(std::string(raw_buffer.begin(), raw_buffer.end())));
+}
+
+void printcat(const VersionedInput& m) {
+  // LOG_INFO(DEBUGGING_LOG, "Merkle ");
+  // for(auto [k,v] : m.kv){
+  //   LOG_INFO(DEBUGGING_LOG, "key " << std::hash<std::string>{}(k) << " val " << std::hash<std::string>{}(v));
+  // }
+  // LOG_INFO(DEBUGGING_LOG, "deltes ");
+  // for(auto k : m.deletes){
+  //   LOG_INFO(DEBUGGING_LOG, "del key " << std::hash<std::string>{}(k));
+  // }
+  const auto& raw_buffer = detail::serialize(m);
+  LOG_ERROR(CAT_BLOCK_LOG,
+            "VersionedInput hash " << std::hash<std::string>{}(std::string(raw_buffer.begin(), raw_buffer.end())));
+  for (auto [k, v] : m.kv) {
+    LOG_ERROR(CAT_BLOCK_LOG,
+              "key " << std::hash<std::string>{}(k) << " val " << std::hash<std::string>{}(v.data) << " keyp " << k
+                     << " valp " << v.data);
+    LOG_ERROR(CAT_BLOCK_LOG, "stale_on_update " << v.stale_on_update);
+  }
+
+  for (auto k : m.deletes) {
+    LOG_ERROR(CAT_BLOCK_LOG, "key " << std::hash<std::string>{}(k));
+  }
+
+  LOG_ERROR(CAT_BLOCK_LOG, "calculate_root_hash " << m.calculate_root_hash);
+}
+
+void printcat(const ImmutableInput& m) {
+  // LOG_INFO(DEBUGGING_LOG, "Merkle ");
+  // for(auto [k,v] : m.kv){
+  //   LOG_INFO(DEBUGGING_LOG, "key " << std::hash<std::string>{}(k) << " val " << std::hash<std::string>{}(v));
+  // }
+  // LOG_INFO(DEBUGGING_LOG, "deltes ");
+  // for(auto k : m.deletes){
+  //   LOG_INFO(DEBUGGING_LOG, "del key " << std::hash<std::string>{}(k));
+  // }
+  const auto& raw_buffer = detail::serialize(m);
+  LOG_ERROR(CAT_BLOCK_LOG,
+            "ImmutableInput hash " << std::hash<std::string>{}(std::string(raw_buffer.begin(), raw_buffer.end())));
+  /*
+  Msg ImmutableInput 5 {
+    # key -> value, [tag1, tag2...]
+    map string ImmutableValueUpdate kv
+    bool calculate_root_hash
+}
+  */
+  for (auto [k, v] : m.kv) {
+    LOG_ERROR(CAT_BLOCK_LOG,
+              "key " << std::hash<std::string>{}(k) << " val " << std::hash<std::string>{}(v.data) << " keyp " << k
+                     << " valp " << v.data);
+    for (auto tag : v.tags) {
+      LOG_ERROR(CAT_BLOCK_LOG, "tag " << tag);
+    }
+  }
+  LOG_ERROR(CAT_BLOCK_LOG, "calculate_root_hash " << m.calculate_root_hash);
+}
+
+void printRawBlock(const RawBlockData& data) {
+  LOG_ERROR(
+      CAT_BLOCK_LOG,
+      "parent_digest: " << std::hash<std::string>{}(std::string(data.parent_digest.begin(), data.parent_digest.end())));
+  for (auto [category_id, update] : data.updates.kv) {
+    std::visit(
+        [category_id = category_id](auto update) {
+          (void)category_id;
+          printcat(update);
+        },
+        update);
+  }
+  LOG_ERROR(CAT_BLOCK_LOG, "category_root_hash size " << data.category_root_hash.size());
+}
+
 // 1) Defines a new block
 // 2) calls per cateogry with its updates
 // 3) inserts the updates KV to the DB updates set per column family
@@ -91,6 +176,14 @@ BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
                                      concord::storage::rocksdb::NativeWriteBatch& write_batch) {
   // Use new client batch and column families
   Block new_block{block_chain_.getLastReachableBlockId() + 1};
+
+  categorization::RawBlockData debug_raw;
+  bool compare{false};
+  if (last_raw_block_.second) {
+    debug_raw = last_raw_block_.second.value();
+    compare = true;
+  }
+
   auto parent_digest_future = computeParentBlockDigest(new_block.id(), std::move(last_raw_block_));
   // initialize the raw block for the next call to computeParentBlockDigest
   auto& last_raw_block = last_raw_block_.second.emplace();
@@ -108,9 +201,29 @@ BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
   }
   new_block.data.parent_digest = parent_digest_future.get();
   last_raw_block.parent_digest = new_block.data.parent_digest;
+
   block_chain_.addBlock(new_block, write_batch);
   LOG_DEBUG(CAT_BLOCK_LOG, "Writing block [" << new_block.id() << "] to the blocks cf");
   write_batch.put(detail::BLOCKS_CF, Block::generateKey(new_block.id()), Block::serialize(new_block));
+
+  if (compare) {
+    auto parent_block_id = new_block.id() - 1;
+    const auto& raw_buffer = detail::serialize(debug_raw);
+    auto parent_block_digest =
+        computeBlockDigest(parent_block_id, reinterpret_cast<const char*>(raw_buffer.data()), raw_buffer.size());
+
+    if (parent_block_digest != new_block.data.parent_digest) {
+      auto parent_block_id = new_block.id() - 1;
+      auto parent_raw_block = getRawBlock(parent_block_id);
+      LOG_ERROR(CAT_BLOCK_LOG, "mismatch digests - from DB");
+      printRawBlock(parent_raw_block.value().data);
+      LOG_ERROR(CAT_BLOCK_LOG, "mismatch digests - CACHED");
+      printRawBlock(debug_raw);
+    } else {
+      LOG_INFO(CAT_BLOCK_LOG, "Digests are equal for " << parent_block_id);
+    }
+  }
+
   return new_block.id();
 }
 
@@ -118,11 +231,11 @@ std::future<BlockDigest> KeyValueBlockchain::computeParentBlockDigest(const Bloc
                                                                       VersionedRawBlock&& cached_raw_block) {
   auto parent_block_id = block_id - 1;
   // if we have a cached raw block and it matches the parent_block_id then use it.
-  if (cached_raw_block.second && cached_raw_block.first == parent_block_id) {
-    LOG_DEBUG(CAT_BLOCK_LOG, "Using cached raw block for computing parent digest");
-  }
+  // if (cached_raw_block.second && cached_raw_block.first == parent_block_id) {
+  //   LOG_DEBUG(CAT_BLOCK_LOG, "Using cached raw block for computing parent digest");
+  // }
   // cached raw block is unusable, get the raw block from storage
-  else if (block_id > INITIAL_GENESIS_BLOCK_ID) {
+  if (block_id > INITIAL_GENESIS_BLOCK_ID) {
     auto parent_raw_block = getRawBlock(parent_block_id);
     ConcordAssert(parent_raw_block.has_value());
     cached_raw_block.second = std::move(parent_raw_block->data);
