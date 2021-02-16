@@ -177,6 +177,11 @@ BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
   // Use new client batch and column families
   Block new_block{block_chain_.getLastReachableBlockId() + 1};
 
+  const auto& ser_buff = detail::serializeThreadLocal(category_updates);
+  std::string str_ser_buff(ser_buff.begin(), ser_buff.end());
+
+  LOG_INFO(CAT_BLOCK_LOG, "updates of " << new_block.id() << " digest " << std::hash<std::string>{}(str_ser_buff));
+
   categorization::RawBlockData debug_raw;
   bool compare{false};
   if (last_raw_block_.second) {
@@ -220,7 +225,10 @@ BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
       LOG_ERROR(CAT_BLOCK_LOG, "mismatch digests - CACHED");
       printRawBlock(debug_raw);
     } else {
-      LOG_INFO(CAT_BLOCK_LOG, "Digests are equal for " << parent_block_id);
+      LOG_INFO(CAT_BLOCK_LOG,
+               "Digests are equal for " << parent_block_id
+                                        << std::hash<std::string>{}(
+                                               std::string(parent_block_digest.begin(), parent_block_digest.end())));
     }
   }
 
