@@ -339,6 +339,9 @@ bool ReplicaImp::getBlock(uint64_t blockId, char *outBlock, uint32_t *outBlockSi
     throw NotFoundException{"Raw block not found: " + std::to_string(blockId)};
   }
   const auto &ser = categorization::RawBlock::serialize(*rawBlock);
+  LOG_INFO(
+      CAT_BLOCK_LOG,
+      "ST raw block digest for " << blockId << " is " << std::hash<std::string>{}(std::string(ser.begin(), ser.end())));
   *outBlockSize = ser.size();
   std::memcpy(outBlock, ser.data(), *outBlockSize);
   return true;

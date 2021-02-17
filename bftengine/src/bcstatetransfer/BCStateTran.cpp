@@ -2490,6 +2490,9 @@ STDigest BCStateTran::getBlockAndComputeDigest(uint64_t currBlock) {
   STDigest currDigest;
   uint32_t blockSize = 0;
   as_->getBlock(currBlock, buffer_, &blockSize);
+  LOG_INFO(CAT_BLOCK_LOG,
+           "ComputeDigest raw block digest for " << currBlock << " size is  " << blockSize << " hash "
+                                                 << std::hash<std::string>{}(std::string(buffer_, blockSize)));
   computeDigestOfBlock(currBlock, buffer_, blockSize, &currDigest);
   memset(buffer_, 0, blockSize);
   return currDigest;

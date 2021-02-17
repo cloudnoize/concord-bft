@@ -213,25 +213,23 @@ BlockId KeyValueBlockchain::addBlock(CategoryInput&& category_updates,
 
   if (compare) {
     auto parent_block_id = new_block.id() - 1;
-    auto parent_raw_block = getRawBlock(parent_block_id);
-    if (parent_raw_block) {
-      const auto& parent_raw_block_buffer = detail::serialize(parent_raw_block.value().data);
-      auto parent_block_digest = computeBlockDigest(parent_block_id,
-                                                    reinterpret_cast<const char*>(parent_raw_block_buffer.data()),
-                                                    parent_raw_block_buffer.size());
 
-      if (parent_block_digest != new_block.data.parent_digest) {
-        LOG_ERROR(CAT_BLOCK_LOG, "mismatch digests - from DB");
-        printRawBlock(parent_raw_block.value().data);
-        LOG_ERROR(CAT_BLOCK_LOG, "mismatch digests - CACHED");
-        printRawBlock(debug_raw);
-        ConcordAssert(false);
-      } else {
-        LOG_INFO(CAT_BLOCK_LOG,
-                 "Digests are equal for "
-                     << parent_block_id << " hash "
-                     << std::hash<std::string>{}(std::string(parent_block_digest.begin(), parent_block_digest.end())));
-      }
+    const auto& cached_block_ser = detail::serialize(debug_raw);
+    auto cached_block_digest = computeBlockDigest(
+        parent_block_id, reinterpret_cast<const char*>(cached_block_ser.data()), cached_block_ser.size());
+
+    if (cached_block_digest != new_block.data.parent_digest) {
+      LOG_ERROR(CAT_BLOCK_LOG, "mismatch digests - from DB");
+      auto parent_raw_block = getRawBlock(parent_block_id);
+      printRawBlock(parent_raw_block.value().data);
+      LOG_ERROR(CAT_BLOCK_LOG, "mismatch digests - CACHED");
+      printRawBlock(debug_raw);
+      ConcordAssert(false);
+    } else {
+      LOG_INFO(CAT_BLOCK_LOG,
+               "Digests are equal for " << parent_block_id << " hash "
+                                        << std::hash<std::string>{}(
+                                               std::string(cached_block_digest.begin(), cached_block_digest.end())));
     }
   }
 
@@ -242,11 +240,11 @@ std::future<BlockDigest> KeyValueBlockchain::computeParentBlockDigest(const Bloc
                                                                       VersionedRawBlock&& cached_raw_block) {
   auto parent_block_id = block_id - 1;
   // if we have a cached raw block and it matches the parent_block_id then use it.
-  if (cached_raw_block.second && cached_raw_block.first == parent_block_id) {
-    LOG_DEBUG(CAT_BLOCK_LOG, "Using cached raw block for computing parent digest");
-  }
+  // if (cached_raw_block.second && cached_raw_block.first == parent_block_id) {
+  //   LOG_DEBUG(CAT_BLOCK_LOG, "Using cached raw block for computing parent digest");
+  // }
   // cached raw block is unusable, get the raw block from storage
-  else if (block_id > INITIAL_GENESIS_BLOCK_ID) {
+  if (block_id > INITIAL_GENESIS_BLOCK_ID) {
     auto parent_raw_block = getRawBlock(parent_block_id);
     ConcordAssert(parent_raw_block.has_value());
     cached_raw_block.second = std::move(parent_raw_block->data);

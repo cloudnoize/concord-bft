@@ -70,7 +70,14 @@ class Blockchain {
     if (!block) {
       return std::optional<RawBlock>{};
     }
-    return RawBlock(block.value(), native_client_, categorires);
+    auto rb = RawBlock(block.value(), native_client_, categorires);
+
+    const auto& ser = categorization::RawBlock::serialize(rb);
+    LOG_INFO(
+        CAT_BLOCK_LOG,
+        "raw block digest for " << block_id << " is " << std::hash<std::string>{}(std::string(ser.begin(), ser.end())));
+
+    return rb;
   }
 
   std::optional<Hash> parentDigest(BlockId block_id) const {
